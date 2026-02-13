@@ -6,7 +6,7 @@ const { kordStatistic } = require('./src/Plugin/kordStatistic');
 const { checkFFmpeg } = require('./src/Plugin/kordModule');
 const socketIo = require('socket.io');
 
-// ── NEW IMPORTS for pairing code mode ────────────────────────────────
+// ── Pairing code imports ─────────────────────────────────────────────
 const readline = require('readline');
 const fs = require('fs');
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
@@ -27,7 +27,7 @@ const io = socketIo(server);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files from the 'Public' folder
+// Serve static files
 app.use(express.static(path.join(__dirname, 'Public')));
 
 // Root route
@@ -35,7 +35,7 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '/Public/index.html'));
 });
 
-// Socket.IO connection handling
+// Socket.IO
 io.on('connection', (socket) => {
   console.log('A user connected');
   socket.on('disconnect', () => {
@@ -43,7 +43,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Improved global error handler
+// Error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   const statusCode = err.statusCode || 500;
@@ -51,14 +51,14 @@ app.use((err, req, res, next) => {
   res.status(statusCode).send(errorMessage);
 });
 
-// ── MAIN START FUNCTION ──────────────────────────────────────────────
+// ── START SERVER + OUR PAIRING LOGIC ─────────────────────────────────
 (async () => {
   try {
-    // Kord statistics & ffmpeg check (keep original)
     kordStatistic(app, io);
+
+    // Check ffmpeg (keep original)
     checkFFmpeg((isInstalled) => {
       if (!isInstalled) {
-        // Your original disk check + download logic
         checkDiskSpace((hasSpace) => {
           if (hasSpace) {
             downloadFFmpeg();
@@ -68,32 +68,31 @@ app.use((err, req, res, next) => {
     });
 
     server.listen(port, async () => {
-      console.log(`Server is listening on port ${port}`);
+      console.log(`Server listening on port ${port}`);
 
-      // ── OUR STYLE: Pairing code mode if no session ──────────────────
-      const sessionPath = path.join(__dirname, 'session'); // adjust if Kord uses different folder name
+      // ── Pairing code if no session ──────────────────────────────────
+      const sessionPath = path.join(__dirname, 'session'); // change if Kord uses different folder
 
       const hasSession = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 0;
 
       if (hasSession) {
-        console.log('Existing session found → normal connection');
+        console.log('Session exists → normal start');
         await kordAi(io, app);
       } else {
-        console.log('No session found → starting PHONE NUMBER + PAIRING CODE mode');
+        console.log('No session → pairing mode');
 
-        // Ask for phone number in terminal/logs
         const phoneNumber = await new Promise(resolve => {
-          rl.question('\nEnter WhatsApp number (with country code, no + or 0, e.g. 2348012345678): ', resolve);
+          rl.question('Enter WhatsApp number (country code, no +, e.g. 2348012345678): ', resolve);
         });
 
         const cleanNumber = phoneNumber.trim().replace(/\D/g, '');
 
         if (!cleanNumber || cleanNumber.length < 10) {
-          console.error('Invalid phone number');
+          console.error('Invalid number');
           process.exit(1);
         }
 
-        console.log(`\nRequesting pairing code for +${cleanNumber}...`);
+        console.log(`\nGenerating pairing code for +${cleanNumber}...`);
 
         try {
           const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
@@ -105,33 +104,31 @@ app.use((err, req, res, next) => {
           });
 
           const code = await tempSock.requestPairingCode(cleanNumber);
-          console.log(`\n╔════════════════════════════════════╗`);
+          console.log(`\n╔══════════════════════════════╗`);
           console.log(`║   PAIRING CODE: ${code}   ║`);
-          console.log(`╚════════════════════════════════════╝`);
-          console.log('\nGo to WhatsApp → Settings → Linked Devices → "Link with phone number"');
-          console.log('Enter the code above. Bot will connect automatically.\n');
+          console.log(`╚══════════════════════════════╝`);
+          console.log('\nWhatsApp → Settings → Linked Devices → Link with phone number');
+          console.log('Enter the code. Bot will connect automatically.\n');
 
           tempSock.ev.on('connection.update', (update) => {
-            const { connection } = update;
-            if (connection === 'open') {
-              console.log('Successfully paired! Session saved.');
+            if (update.connection === 'open') {
+              console.log('Paired! Session saved.');
               saveCreds();
               tempSock.end();
-              // Now launch the full Kord bot
-              kordAi(io, app);
+              kordAi(io, app); // Start full bot
             }
           });
 
           tempSock.ev.on('creds.update', saveCreds);
 
         } catch (err) {
-          console.error('Pairing failed:', err.message || err);
+          console.error('Pairing error:', err.message || err);
           process.exit(1);
         }
       }
     });
 
   } catch (err) {
-    console.error('Fatal startup error:', err);
+    console.error('Startup error:', err);
   }
 })();
